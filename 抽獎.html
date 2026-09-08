@@ -348,14 +348,20 @@
     setTimeout(async () => {
       resultPanel.innerHTML = '<div class="status-text">登記結果中…</div>';
       try {
-        const newState = await apiPost('recordDraw', { nameId: chosen.id, prizeId: prize.id });
-        if (newState.error) throw new Error(newState.error);
-        state = newState;
+        const result = await apiPost('recordDraw', { nameId: chosen.id, prizeId: prize.id });
+        if (result.error) throw new Error(result.error);
+
+        const nameIdx2 = state.names.findIndex((n) => n.id === chosen.id);
+        if (nameIdx2 > -1) state.names[nameIdx2].drawStatus = '已抽';
+        const prizeIdx2 = state.prizes.findIndex((p) => p.id === prize.id);
+        if (prizeIdx2 > -1) state.prizes[prizeIdx2].drawn = result.prize.drawn;
+        state.currentPrizeId = result.currentPrizeId;
+
         resultPanel.innerHTML =
           '<div class="result-badges">' +
-            '<span class="badge badge-prize">' + escapeHtml(prize.name) + '</span>' +
-            '<span class="badge badge-dept">' + escapeHtml(chosenDeptLabel) + '</span>' +
-            '<span class="badge badge-name">' + escapeHtml(chosen.name) + '</span>' +
+            '<span class="badge badge-prize">' + escapeHtml(result.prize.name) + '</span>' +
+            '<span class="badge badge-dept">' + escapeHtml(result.dept || chosenDeptLabel) + '</span>' +
+            '<span class="badge badge-name">' + escapeHtml(result.name) + '</span>' +
           '</div>';
         renderPrizeCard();
         refreshReelsFromState();
@@ -376,6 +382,10 @@
     setupNote.style.display = 'block';
   } else {
     mainArea.style.display = 'block';
+    prizeNameEl.textContent = '讀取中…';
+    prizeQuotaEl.textContent = '';
+    spinBtn.disabled = true;
+    spinBtn.textContent = '讀取中…';
     loadState();
   }
 })();
