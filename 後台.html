@@ -313,7 +313,6 @@
 
       const removeBtn = document.createElement('button');
       removeBtn.className = 'icon-btn'; removeBtn.type = 'button'; removeBtn.textContent = '×';
-      removeBtn.disabled = sorted.length <= 1;
       removeBtn.addEventListener('click', () => db.collection('prizes').doc(item.id).delete());
       tailWrap.appendChild(removeBtn);
 
@@ -343,7 +342,6 @@
       const spacer = document.createElement('div');
       const removeBtn = document.createElement('button');
       removeBtn.className = 'icon-btn'; removeBtn.type = 'button'; removeBtn.textContent = '×';
-      removeBtn.disabled = deptsArr.length <= 1;
       removeBtn.addEventListener('click', () => db.collection('depts').doc(item.id).delete());
 
       row.appendChild(input); row.appendChild(spacer); row.appendChild(removeBtn);
@@ -430,7 +428,6 @@
 
       const removeBtn = document.createElement('button');
       removeBtn.className = 'icon-btn'; removeBtn.type = 'button'; removeBtn.textContent = '×';
-      removeBtn.disabled = namesArr.length <= 1;
       removeBtn.addEventListener('click', () => db.collection('names').doc(item.id).delete());
 
       tagsRow.appendChild(tagsLeft);
