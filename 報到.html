@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;700&family=Noto+Sans+TC:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <style>
   :root {
     --cream: #F8F5EE; --deep-green: #4E5E48; --gold: #E4C778; --wood: #8A6A49; --ink: #33291C;
@@ -45,8 +47,15 @@
 
 <script>
 (function () {
-  // 貼上你部署 Apps Script 後拿到的網址（結尾是 /exec）
-  const API_URL = 'https://script.google.com/macros/s/AKfycbyNzIWNRMXeANQ6SZjNqlzkP8z9Zbmprgfb180avSmkGTOE2vRZYJyMUgjnHi4R7OU/exec';
+  // 貼上你自己 Firebase 專案的設定值
+  const firebaseConfig = {
+    apiKey: "AIzaSyDLTNqKaU2MQlAb-gK23av5RHQQHl0Y_VQ",
+    authDomain: "bori-lottery.firebaseapp.com",
+    projectId: "bori-lottery",
+    storageBucket: "bori-lottery.firebasestorage.app",
+    messagingSenderId: "506695460490",
+    appId: "1:506695460490:web:b6815c5350e35e79406f73"
+  };
 
   const markEl = document.getElementById('mark');
   const titleEl = document.getElementById('title');
@@ -59,34 +68,41 @@
     msgEl.textContent = msg;
   }
 
-  const params = new URLSearchParams(window.location.search);
-  const code = params.get('code');
-
-  if (!API_URL) {
-    setState('err', '!', '尚未設定', '這個頁面還沒有連到試算表，請跟主辦單位確認。');
+  if (!firebaseConfig.projectId) {
+    setState('err', '!', '尚未設定', '這個頁面還沒有連到 Firebase，請跟主辦單位確認。');
     return;
   }
+
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
   if (!code) {
     setState('err', '!', '缺少代碼', '這個連結沒有帶通行證代碼，請確認掃描的 QR 是否正確。');
     return;
   }
 
-  fetch(API_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ action: 'checkIn', code: code })
-  })
-    .then((res) => res.json())
-    .then((data) => {
-      if (data.error) {
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+
+  db.collection('names').where('code', '==', code).limit(1).get()
+    .then((snap) => {
+      if (snap.empty) {
         setState('err', '!', '查無此代碼', '請跟工作人員確認通行證是否正確。');
         return;
       }
-      if (data.alreadyCheckedIn) {
-        setState('warn', '✓', (data.name || '') + '　已經報到過了', data.dept || '');
-      } else {
-        setState('ok', '✓', (data.name || '') + '　報到成功', data.dept || '');
-      }
+      const docRef = snap.docs[0].ref;
+      return db.runTransaction(async (tx) => {
+        const doc = await tx.get(docRef);
+        const data = doc.data();
+        const already = data.checkinStatus === '已報到';
+        if (!already) tx.update(docRef, { checkinStatus: '已報到' });
+        return { already: already, name: data.name, dept: data.dept };
+      }).then((result) => {
+        if (result.already) {
+          setState('warn', '✓', (result.name || '') + '　已經報到過了', result.dept || '');
+        } else {
+          setState('ok', '✓', (result.name || '') + '　報到成功', result.dept || '');
+        }
+      });
     })
     .catch(() => {
       setState('err', '!', '連線失敗', '請檢查網路後重新整理再試一次。');

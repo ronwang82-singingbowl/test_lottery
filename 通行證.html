@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;700&family=Noto+Sans+TC:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <style>
   :root {
     --cream: #F8F5EE; --deep-green: #4E5E48; --gold: #E4C778; --wood: #8A6A49; --ink: #33291C; --sand: #DCC6A4;
@@ -39,16 +41,21 @@
 </head>
 <body>
 <div class="card" id="card">
-  <div id="content">
-    <p class="msg">讀取中…</p>
-  </div>
+  <div id="content"><p class="msg">讀取中…</p></div>
 </div>
 
 <script>
 (function () {
-  // 貼上你部署 Apps Script 後拿到的網址（結尾是 /exec）
-  const API_URL = 'https://script.google.com/macros/s/AKfycbyNzIWNRMXeANQ6SZjNqlzkP8z9Zbmprgfb180avSmkGTOE2vRZYJyMUgjnHi4R7OU/exec';
-  // 貼上「報到.html」部署後的公開網址，QR 會指向這裡
+  // 貼上你自己 Firebase 專案的設定值
+  const firebaseConfig = {
+    apiKey: "AIzaSyDLTNqKaU2MQlAb-gK23av5RHQQHl0Y_VQ",
+    authDomain: "bori-lottery.firebaseapp.com",
+    projectId: "bori-lottery",
+    storageBucket: "bori-lottery.firebasestorage.app",
+    messagingSenderId: "506695460490",
+    appId: "1:506695460490:web:b6815c5350e35e79406f73"
+  };
+  // 貼上「報到.html」部署後的公開網址（GitHub Pages），QR 會指向這裡
   const CHECKIN_PAGE_URL = 'https://ronwang82-singingbowl.github.io/test_lottery/報到.html';
 
   const contentEl = document.getElementById('content');
@@ -59,30 +66,32 @@
     return div.innerHTML;
   }
 
-  const params = new URLSearchParams(window.location.search);
-  const code = params.get('code');
-
-  if (!API_URL || !CHECKIN_PAGE_URL) {
+  if (!firebaseConfig.projectId || !CHECKIN_PAGE_URL) {
     contentEl.innerHTML = '<p class="msg">這個頁面還沒有設定完成，請跟主辦單位確認。</p>';
     return;
   }
+
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
   if (!code) {
     contentEl.innerHTML = '<p class="msg">連結缺少代碼，請確認網址是否正確。</p>';
     return;
   }
 
-  fetch(API_URL + '?action=getPass&code=' + encodeURIComponent(code))
-    .then((res) => res.json())
-    .then((data) => {
-      if (data.error) {
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+
+  db.collection('names').where('code', '==', code).limit(1).get()
+    .then((snap) => {
+      if (snap.empty) {
         contentEl.innerHTML = '<p class="msg">找不到這張通行證，請跟主辦單位確認連結是否正確。</p>';
         return;
       }
+      const data = snap.docs[0].data();
       const checkinUrl = CHECKIN_PAGE_URL + '?code=' + encodeURIComponent(code);
       const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(checkinUrl);
       const checkedNote = data.checkinStatus === '已報到'
-        ? '<div class="checked-note">你已經完成報到</div>'
-        : '';
+        ? '<div class="checked-note">你已經完成報到</div>' : '';
       contentEl.innerHTML =
         '<div class="label">活動通行證</div>' +
         '<h1>' + escapeHtml(data.name || '') + '</h1>' +

@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <style>
   :root {
     --cream: #F8F5EE; --deep-green: #4E5E48; --gold: #E4C778;
@@ -26,12 +28,6 @@
     font-size: clamp(1.8rem, 4vw, 2.3rem); color: var(--deep-green); margin: 0 0 8px;
   }
   .subhead { color: var(--wood); font-size: 0.95rem; }
-  .refresh-btn {
-    position: absolute; top: 0; right: 0; border: 1px solid var(--sand);
-    background: #fff; color: var(--wood); border-radius: 999px;
-    padding: 6px 14px; font-size: 0.8rem; cursor: pointer;
-  }
-  .refresh-btn:hover { background: var(--sand); color: var(--ink); }
 
   .setup-note {
     background: #fff8e6; border: 1px solid var(--gold); border-radius: 14px;
@@ -114,12 +110,11 @@
 
   <header>
     <h1>抽獎</h1>
-    <p class="subhead">部門會跟著抽到的人一起定格；獎品在上面直接切換。</p>
-    <button class="refresh-btn" id="refreshBtn" type="button">重新整理</button>
+    <p class="subhead">部門會跟著抽到的人一起定格；獎品在上面直接切換。資料即時同步，不用手動重新整理。</p>
   </header>
 
   <div id="setupNote" class="setup-note" style="display:none;">
-    這個頁面還沒有連到你的 Google 試算表。請打開這個檔案，把最上方 <code>API_URL</code> 換成部署後拿到的網址（結尾是 <code>/exec</code>），存檔後重新整理。
+    這個頁面還沒有連到 Firebase。請打開這個檔案，把最上面的 firebaseConfig 換成你自己 Firebase 專案的設定值，存檔後重新整理。
   </div>
 
   <div id="mainArea" style="display:none;">
@@ -127,8 +122,8 @@
       <button class="nav-btn" id="prevPrizeBtn" type="button" aria-label="上一個獎品">‹</button>
       <div class="prize-info">
         <div class="label">目前獎品</div>
-        <div class="name" id="prizeName">—</div>
-        <div class="quota" id="prizeQuota">—</div>
+        <div class="name" id="prizeName">讀取中…</div>
+        <div class="quota" id="prizeQuota"></div>
       </div>
       <button class="nav-btn" id="nextPrizeBtn" type="button" aria-label="下一個獎品">›</button>
     </div>
@@ -150,7 +145,7 @@
           </div>
         </div>
       </div>
-      <button id="spinBtn" class="spin-btn">開始滾動</button>
+      <button id="spinBtn" class="spin-btn" disabled>讀取中…</button>
       <div id="resultPanel" class="result-panel" aria-live="polite"></div>
     </section>
   </div>
@@ -159,16 +154,33 @@
 
 <script>
 (function () {
-  // 貼上你部署 Apps Script 後拿到的網址（結尾是 /exec）
-  const API_URL = 'https://script.google.com/macros/s/AKfycbyNzIWNRMXeANQ6SZjNqlzkP8z9Zbmprgfb180avSmkGTOE2vRZYJyMUgjnHi4R7OU/exec';
+  // 貼上你自己 Firebase 專案的設定值（Firebase 主控台 → 專案設定 → 一般 → 你的應用程式）
+  const firebaseConfig = {
+    apiKey: "AIzaSyDLTNqKaU2MQlAb-gK23av5RHQQHl0Y_VQ",
+    authDomain: "bori-lottery.firebaseapp.com",
+    projectId: "bori-lottery",
+    storageBucket: "bori-lottery.firebasestorage.app",
+    messagingSenderId: "506695460490",
+    appId: "1:506695460490:web:b6815c5350e35e79406f73"
+  };
+
+  if (!firebaseConfig.projectId) {
+    document.getElementById('setupNote').style.display = 'block';
+    return;
+  }
+  document.getElementById('mainArea').style.display = 'block';
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
 
   const ITEM_H = 64;
-  let state = { depts: [], names: [], prizes: [], currentPrizeId: '', history: [] };
+  let namesArr = [];
+  let prizesArr = [];
+  let currentPrizeId = '';
+  let loaded = { names: false, prizes: false, settings: false };
   const posState = { dept: 0, name: 0 };
   let spinning = false;
 
-  const setupNote = document.getElementById('setupNote');
-  const mainArea = document.getElementById('mainArea');
   const stripEl = { dept: document.getElementById('stripDept'), name: document.getElementById('stripName') };
   const spinBtn = document.getElementById('spinBtn');
   const resultPanel = document.getElementById('resultPanel');
@@ -176,7 +188,6 @@
   const prizeQuotaEl = document.getElementById('prizeQuota');
   const prevPrizeBtn = document.getElementById('prevPrizeBtn');
   const nextPrizeBtn = document.getElementById('nextPrizeBtn');
-  const refreshBtn = document.getElementById('refreshBtn');
 
   function escapeHtml(str) {
     const div = document.createElement('div');
@@ -187,13 +198,13 @@
     return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   }
   function eligibleNames() {
-    return state.names.filter((n) => n.checkinStatus === '已報到' && n.drawStatus !== '已抽');
+    return namesArr.filter((n) => n.checkinStatus === '已報到' && n.drawStatus !== '已抽');
   }
   function sortedPrizes() {
-    return [...state.prizes].sort((a, b) => Number(a.order) - Number(b.order));
+    return [...prizesArr].sort((a, b) => Number(a.order) - Number(b.order));
   }
   function currentPrize() {
-    return state.prizes.find((p) => p.id === state.currentPrizeId) || null;
+    return prizesArr.find((p) => p.id === currentPrizeId) || null;
   }
   function remainingOf(item) {
     return Math.max(0, (Number(item.quota) || 0) - (Number(item.drawn) || 0));
@@ -209,21 +220,12 @@
     });
     return seen.map((d) => ({ name: d }));
   }
-
-  async function apiGet() {
-    const res = await fetch(API_URL + '?action=getState');
-    return res.json();
-  }
-  async function apiPost(action, payload) {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(Object.assign({ action }, payload))
-    });
-    return res.json();
+  function allLoaded() {
+    return loaded.names && loaded.prizes && loaded.settings;
   }
 
   function renderPrizeCard() {
+    if (!allLoaded()) return;
     const prize = currentPrize();
     const sorted = sortedPrizes();
     if (!prize) {
@@ -284,13 +286,13 @@
   }
 
   function updateAvailability() {
+    if (!allLoaded()) { spinBtn.disabled = true; spinBtn.textContent = '讀取中…'; return; }
     const names = eligibleNames();
-    const nameOk = names.length > 0;
     const prize = currentPrize();
     const prizeOk = prize && remainingOf(prize) > 0;
 
     if (spinning) { spinBtn.disabled = true; return; }
-    if (!nameOk) {
+    if (names.length === 0) {
       spinBtn.disabled = true; spinBtn.textContent = '沒有已報到、還沒抽過的人';
     } else if (!prizeOk) {
       spinBtn.disabled = true; spinBtn.textContent = '請先選一個還有名額的獎品';
@@ -300,28 +302,63 @@
   }
 
   function refreshReelsFromState() {
+    if (!allLoaded()) return;
     const names = eligibleNames();
     initReelDisplay('name', names);
     initReelDisplay('dept', uniqueDeptPool(names));
   }
 
-  async function loadState() {
-    state = await apiGet();
-    renderPrizeCard();
-    refreshReelsFromState();
-    updateAvailability();
-  }
-
   async function switchPrize(direction) {
     const sorted = sortedPrizes();
     if (sorted.length < 2) return;
-    const idx = sorted.findIndex((p) => p.id === state.currentPrizeId);
+    const idx = sorted.findIndex((p) => p.id === currentPrizeId);
     const nextIdx = direction === 'next'
       ? (idx + 1 + sorted.length) % sorted.length
       : (idx - 1 + sorted.length) % sorted.length;
-    state = await apiPost('setCurrentPrize', { id: sorted[nextIdx].id });
-    renderPrizeCard();
-    updateAvailability();
+    await db.collection('settings').doc('current').set({ currentPrizeId: sorted[nextIdx].id }, { merge: true });
+  }
+
+  async function commitDraw(nameId, prizeId) {
+    const nameRef = db.collection('names').doc(nameId);
+    const prizeRef = db.collection('prizes').doc(prizeId);
+    const settingsRef = db.collection('settings').doc('current');
+
+    return db.runTransaction(async (tx) => {
+      const nameSnap = await tx.get(nameRef);
+      const prizeSnap = await tx.get(prizeRef);
+      if (!nameSnap.exists || !prizeSnap.exists) throw new Error('invalid ids');
+      const nameData = nameSnap.data();
+      const prizeData = prizeSnap.data();
+      if (nameData.checkinStatus !== '已報到') throw new Error('not checked in');
+      if (nameData.drawStatus === '已抽') throw new Error('already drawn');
+      const quota = Number(prizeData.quota) || 0;
+      const newDrawn = (Number(prizeData.drawn) || 0) + 1;
+      if (newDrawn > quota) throw new Error('no quota');
+
+      tx.update(nameRef, { drawStatus: '已抽' });
+      tx.update(prizeRef, { drawn: newDrawn });
+      tx.set(db.collection('history').doc(), {
+        time: new Date().toISOString(),
+        dept: nameData.dept || '',
+        name: nameData.name,
+        prize: prizeData.name,
+        drawnNumber: newDrawn,
+        quota: quota
+      });
+
+      let nextId = prizeId;
+      if (newDrawn >= quota) {
+        const order = Number(prizeData.order);
+        const sorted = [...prizesArr].sort((a, b) => Number(a.order) - Number(b.order));
+        const remainOf = (p) => (p.id === prizeId ? quota - newDrawn : (Number(p.quota) || 0) - (Number(p.drawn) || 0));
+        nextId = '';
+        for (const p of sorted) { if (Number(p.order) > order && remainOf(p) > 0) { nextId = p.id; break; } }
+        if (!nextId) { for (const p of sorted) { if (remainOf(p) > 0) { nextId = p.id; break; } } }
+        tx.set(settingsRef, { currentPrizeId: nextId }, { merge: true });
+      }
+
+      return { dept: nameData.dept, name: nameData.name, prizeName: prizeData.name, drawn: newDrawn, quota: quota, nextId: nextId };
+    });
   }
 
   function spin() {
@@ -348,25 +385,15 @@
     setTimeout(async () => {
       resultPanel.innerHTML = '<div class="status-text">登記結果中…</div>';
       try {
-        const result = await apiPost('recordDraw', { nameId: chosen.id, prizeId: prize.id });
-        if (result.error) throw new Error(result.error);
-
-        const nameIdx2 = state.names.findIndex((n) => n.id === chosen.id);
-        if (nameIdx2 > -1) state.names[nameIdx2].drawStatus = '已抽';
-        const prizeIdx2 = state.prizes.findIndex((p) => p.id === prize.id);
-        if (prizeIdx2 > -1) state.prizes[prizeIdx2].drawn = result.prize.drawn;
-        state.currentPrizeId = result.currentPrizeId;
-
+        const result = await commitDraw(chosen.id, prize.id);
         resultPanel.innerHTML =
           '<div class="result-badges">' +
-            '<span class="badge badge-prize">' + escapeHtml(result.prize.name) + '</span>' +
+            '<span class="badge badge-prize">' + escapeHtml(result.prizeName) + '</span>' +
             '<span class="badge badge-dept">' + escapeHtml(result.dept || chosenDeptLabel) + '</span>' +
             '<span class="badge badge-name">' + escapeHtml(result.name) + '</span>' +
           '</div>';
-        renderPrizeCard();
-        refreshReelsFromState();
       } catch (err) {
-        resultPanel.innerHTML = '<div class="status-text">紀錄失敗，請按上方「重新整理」後再試一次。</div>';
+        resultPanel.innerHTML = '<div class="status-text">紀錄失敗（' + (err.message || '未知錯誤') + '），請重新整理後再試一次。</div>';
       }
       spinning = false;
       updateAvailability();
@@ -376,18 +403,26 @@
   spinBtn.addEventListener('click', spin);
   prevPrizeBtn.addEventListener('click', () => switchPrize('prev'));
   nextPrizeBtn.addEventListener('click', () => switchPrize('next'));
-  refreshBtn.addEventListener('click', () => { loadState(); });
 
-  if (!API_URL) {
-    setupNote.style.display = 'block';
-  } else {
-    mainArea.style.display = 'block';
-    prizeNameEl.textContent = '讀取中…';
-    prizeQuotaEl.textContent = '';
-    spinBtn.disabled = true;
-    spinBtn.textContent = '讀取中…';
-    loadState();
-  }
+  db.collection('names').onSnapshot((snap) => {
+    namesArr = snap.docs.map((d) => Object.assign({ id: d.id }, d.data()));
+    loaded.names = true;
+    refreshReelsFromState();
+    updateAvailability();
+    renderPrizeCard();
+  });
+  db.collection('prizes').onSnapshot((snap) => {
+    prizesArr = snap.docs.map((d) => Object.assign({ id: d.id }, d.data()));
+    loaded.prizes = true;
+    renderPrizeCard();
+    updateAvailability();
+  });
+  db.collection('settings').doc('current').onSnapshot((snap) => {
+    currentPrizeId = snap.exists ? (snap.data().currentPrizeId || '') : '';
+    loaded.settings = true;
+    renderPrizeCard();
+    updateAvailability();
+  });
 })();
 </script>
 </body>
