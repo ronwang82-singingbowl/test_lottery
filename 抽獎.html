@@ -87,8 +87,18 @@
   .spin-btn:disabled { background: var(--sand); color: var(--wood); cursor: not-allowed; box-shadow: none; }
   .spin-btn:focus-visible, button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 
+  .draw-count-row {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    margin-top: 12px; color: var(--cream); font-size: 0.88rem;
+  }
+  .draw-count-row input[type="number"] {
+    width: 60px; text-align: center; border: 1px solid var(--sand); border-radius: 8px;
+    padding: 5px 6px; font-family: inherit; font-size: 0.92rem; color: var(--ink); background: #fff;
+  }
+
   .result-panel { margin-top: 20px; min-height: 56px; text-align: center; }
   .result-badges { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; animation: reveal 0.5s ease; }
+  .result-badges + .result-badges { margin-top: 10px; }
   .badge { padding: 8px 18px; border-radius: 999px; font-weight: 700; font-size: 0.98rem; }
   .badge-prize { background: var(--cream); color: var(--deep-green); border: 1.5px solid var(--deep-green); }
   .badge-dept { background: var(--sand); color: var(--ink); }
@@ -147,6 +157,11 @@
         </div>
       </div>
       <button id="spinBtn" class="spin-btn" disabled>讀取中…</button>
+      <div class="draw-count-row">
+        <label for="drawCount">一次抽</label>
+        <input type="number" id="drawCount" min="1" value="1">
+        <span>位</span>
+      </div>
       <div id="resultPanel" class="result-panel" aria-live="polite"></div>
     </section>
   </div>
@@ -184,6 +199,7 @@
 
   const stripEl = { dept: document.getElementById('stripDept'), name: document.getElementById('stripName') };
   const spinBtn = document.getElementById('spinBtn');
+  const drawCountInput = document.getElementById('drawCount');
   const resultPanel = document.getElementById('resultPanel');
   const prizeNameEl = document.getElementById('prizeName');
   const prizeQuotaEl = document.getElementById('prizeQuota');
@@ -292,6 +308,13 @@
     const prize = currentPrize();
     const prizeOk = prize && remainingOf(prize) > 0;
 
+    if (prizeOk) {
+      const maxDraw = Math.max(1, Math.min(remainingOf(prize), names.length || 1));
+      drawCountInput.max = String(maxDraw);
+      if (Number(drawCountInput.value) > maxDraw) drawCountInput.value = String(maxDraw);
+      if (Number(drawCountInput.value) < 1 || !drawCountInput.value) drawCountInput.value = '1';
+    }
+
     if (spinning) { spinBtn.disabled = true; return; }
     if (names.length === 0) {
       spinBtn.disabled = true; spinBtn.textContent = '沒有已報到、還沒抽過的人';
@@ -369,15 +392,21 @@
     const prize = currentPrize();
     if (namePool.length === 0 || !prize || remainingOf(prize) <= 0) return;
 
+    const requested = Math.max(1, parseInt(drawCountInput.value, 10) || 1);
+    const batchCount = Math.min(requested, namePool.length, remainingOf(prize));
+
     spinning = true;
     updateAvailability();
     resultPanel.innerHTML = '';
 
-    const nameIdx = Math.floor(Math.random() * namePool.length);
-    const chosen = namePool[nameIdx];
-    const chosenDeptLabel = deptLabel(chosen);
-    let deptIdx = deptPool.findIndex((d) => d.name === chosenDeptLabel);
+    // 先在本地洗牌決定這一批要抽誰（動畫只用第一位當代表，全部結果會一次列出來）
+    const shuffled = [...namePool].sort(() => Math.random() - 0.5);
+    const batch = shuffled.slice(0, batchCount);
+    const showcase = batch[0];
+    const showcaseDept = deptLabel(showcase);
+    let deptIdx = deptPool.findIndex((d) => d.name === showcaseDept);
     if (deptIdx === -1) deptIdx = 0;
+    const nameIdx = namePool.findIndex((n) => n.id === showcase.id);
 
     spinReelTo('dept', deptPool, deptIdx, 2.4, 6);
     spinReelTo('name', namePool, nameIdx, 3.0, 8);
@@ -385,17 +414,32 @@
     const maxDuration = reducedMotion() ? 0.5 : 3.0;
     setTimeout(async () => {
       resultPanel.innerHTML = '<div class="status-text">登記結果中…</div>';
-      try {
-        const result = await commitDraw(chosen.id, prize.id);
-        resultPanel.innerHTML =
-          '<div class="result-badges">' +
-            '<span class="badge badge-prize">' + escapeHtml(result.prizeName) + '</span>' +
-            '<span class="badge badge-dept">' + escapeHtml(result.dept || chosenDeptLabel) + '</span>' +
-            '<span class="badge badge-name">' + escapeHtml(result.name) + '</span>' +
-          '</div>';
-      } catch (err) {
-        resultPanel.innerHTML = '<div class="status-text">紀錄失敗（' + (err.message || '未知錯誤') + '），請重新整理後再試一次。</div>';
+      const results = [];
+      let errorMsg = '';
+      for (const person of batch) {
+        try {
+          const r = await commitDraw(person.id, prize.id);
+          results.push(r);
+        } catch (err) {
+          errorMsg = err.message || '未知錯誤';
+          break;
+        }
       }
+
+      if (results.length === 0) {
+        resultPanel.innerHTML = '<div class="status-text">紀錄失敗（' + escapeHtml(errorMsg || '未知錯誤') + '），請重新整理後再試一次。</div>';
+      } else {
+        resultPanel.innerHTML = results.map((r) =>
+          '<div class="result-badges">' +
+            '<span class="badge badge-prize">' + escapeHtml(r.prizeName) + '</span>' +
+            '<span class="badge badge-dept">' + escapeHtml(r.dept || '') + '</span>' +
+            '<span class="badge badge-name">' + escapeHtml(r.name) + '</span>' +
+          '</div>'
+        ).join('') + (errorMsg
+          ? '<div class="status-text" style="margin-top:8px;">只抽出 ' + results.length + ' 位就中斷了（' + escapeHtml(errorMsg) + '）</div>'
+          : '');
+      }
+
       spinning = false;
       updateAvailability();
     }, maxDuration * 1000 + 150);
